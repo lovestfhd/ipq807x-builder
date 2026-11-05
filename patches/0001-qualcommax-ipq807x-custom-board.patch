@@ -1,42 +1,52 @@
-From 2171ae2497ddc4cc5017907bd96283473f8831a8 Mon Sep 17 00:00:00 2001
-From: wen <wen@local>
-Date: Thu, 5 Nov 2026 01:13:03 +0800
-Subject: [PATCH] qualcommax: add TP-Link TL-ER2260T support and persistent SFP
- speed fix
-
----
- include/quilt.mk                              |   1 +
- .../0013-sfp-ignore-missing-rx-los-gpio.patch |  17 +
- ...dk-shell-restore-interface-mode-enum.patch |  70 +++
- .../boot/dts/qcom/ipq8070-tl-er2260t.dts      | 485 ++++++++++++++++++
- target/linux/qualcommax/image/ipq807x.mk      |  13 +
- .../ipq807x/base-files/etc/board.d/01_leds    |   7 +
- .../ipq807x/base-files/etc/board.d/02_network |   3 +
- .../base-files/etc/init.d/sfp_link_speed      |  91 ++++
- .../base-files/lib/upgrade/platform.sh        |   1 +
- 9 files changed, 688 insertions(+)
- create mode 100644 package/kernel/qca-ssdk/patches/0013-sfp-ignore-missing-rx-los-gpio.patch
- create mode 100644 package/patches/qca-ssdk-shell/0007-qca-ssdk-shell-restore-interface-mode-enum.patch
- create mode 100644 target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq8070-tl-er2260t.dts
- create mode 100755 target/linux/qualcommax/ipq807x/base-files/etc/init.d/sfp_link_speed
-
-diff --git a/include/quilt.mk b/include/quilt.mk
-index e57bad507c..a765435c37 100644
---- a/include/quilt.mk
-+++ b/include/quilt.mk
-@@ -87,6 +87,7 @@ endef
- define Build/Patch/Default
- 	$(if $(QUILT),rm -rf $(PKG_BUILD_DIR)/patches; mkdir -p $(PKG_BUILD_DIR)/patches)
- 	$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR),)
-+	$(if $(wildcard $(TOPDIR)/package/patches/$(PKG_NAME)),$(call PatchDir,$(PKG_BUILD_DIR),$(TOPDIR)/package/patches/$(PKG_NAME),))
- 	$(if $(QUILT),touch $(PKG_BUILD_DIR)/.quilt_used)
- endef
- 
-diff --git a/package/kernel/qca-ssdk/patches/0013-sfp-ignore-missing-rx-los-gpio.patch b/package/kernel/qca-ssdk/patches/0013-sfp-ignore-missing-rx-los-gpio.patch
+diff --git a/include/kernel-defaults.mk b/include/kernel-defaults.mk
+index 3e78b677..066791e4 100644
+--- a/include/kernel-defaults.mk
++++ b/include/kernel-defaults.mk
+@@ -110,7 +110,7 @@ define Kernel/Configure/Default
+ 	awk '/^(#[[:space:]]+)?CONFIG_KERNEL/{sub("CONFIG_KERNEL_","CONFIG_");print}' $(TOPDIR)/.config >> $(LINUX_DIR)/.config.target
+ 	echo "# CONFIG_KALLSYMS_EXTRA_PASS is not set" >> $(LINUX_DIR)/.config.target
+ 	echo "# CONFIG_KALLSYMS_ALL is not set" >> $(LINUX_DIR)/.config.target
+-	$(if $(CONFIG_KERNEL_KALLSYMS),echo "CONFIG_KALLSYMS_UNCOMPRESSED=y" >> $(LINUX_DIR)/.config.target,true)
++	echo "# CONFIG_KALLSYMS_UNCOMPRESSED is not set" >> $(LINUX_DIR)/.config.target
+ 	$(SCRIPT_DIR)/package-metadata.pl kconfig $(TMP_DIR)/.packageinfo $(TOPDIR)/.config $(KERNEL_PATCHVER) > $(LINUX_DIR)/.config.override
+ 	$(SCRIPT_DIR)/kconfig.pl 'm+' '+' $(LINUX_DIR)/.config.target /dev/null $(LINUX_DIR)/.config.override > $(LINUX_DIR)/.config.set
+ 	$(call Kernel/SetNoInitramfs)
+diff --git a/package/boot/uboot-envtools/files/qualcommax b/package/boot/uboot-envtools/files/qualcommax
+index 502f5fea..358e8034 100644
+--- a/package/boot/uboot-envtools/files/qualcommax
++++ b/package/boot/uboot-envtools/files/qualcommax
+@@ -33,7 +33,8 @@ glinet,gl-axt1800|\
+ netgear,rax120v2|\
+ netgear,wax218|\
+ netgear,wax620|\
+-netgear,wax630)
++netgear,wax630|\
++tplink,tl-er2260t)
+ 	idx="$(find_mtd_index 0:appsblenv)"
+ 	[ -n "$idx" ] && \
+ 		ubootenv_add_uci_config "/dev/mtd$idx" "0x0" "0x40000" "0x20000" "2"
+diff --git a/package/qca/qca-ssdk-shell/patches/0002-fix-make-deps-rule.patch b/package/qca/qca-ssdk-shell/patches/0002-fix-make-deps-rule.patch
 new file mode 100644
-index 0000000000..faaeffb4f0
+index 00000000..2fb29a43
 --- /dev/null
-+++ b/package/kernel/qca-ssdk/patches/0013-sfp-ignore-missing-rx-los-gpio.patch
++++ b/package/qca/qca-ssdk-shell/patches/0002-fix-make-deps-rule.patch
+@@ -0,0 +1,11 @@
++--- a/make/target.mk
+++++ b/make/target.mk
++@@ -9,7 +9,7 @@ obj: $(OBJ_LIST)
++ dep: build_dir $(DEP_LIST)
++ 	$(DEP_LOOP)
++ 
++-$(OBJ_LIST): %.o : %.c %.d
+++$(OBJ_LIST): %.o : %.c
++ 	$(CC) $(CFLAGS) $(EXTRA_CFLAGS) -c $< -o $(DST_DIR)/$@
++ 
++ $(DEP_LIST) : %.d : %.c
+diff --git a/package/qca/qca-ssdk/patches/0013-sfp-ignore-missing-rx-los-gpio.patch b/package/qca/qca-ssdk/patches/0013-sfp-ignore-missing-rx-los-gpio.patch
+new file mode 100644
+index 00000000..faaeffb4
+--- /dev/null
++++ b/package/qca/qca-ssdk/patches/0013-sfp-ignore-missing-rx-los-gpio.patch
 @@ -0,0 +1,17 @@
 +--- a/src/hsl/phy/sfp_phy.c
 ++++ b/src/hsl/phy/sfp_phy.c
@@ -55,94 +65,19 @@ index 0000000000..faaeffb4f0
 + 				/*if uniphy is link up and rx los is 0, then link up,
 + 				if uniphy is link up but rx los is 1, this is fake link*/
 + 				if(rx_los_status)
-diff --git a/package/patches/qca-ssdk-shell/0007-qca-ssdk-shell-restore-interface-mode-enum.patch b/package/patches/qca-ssdk-shell/0007-qca-ssdk-shell-restore-interface-mode-enum.patch
+diff --git a/target/linux/qualcommax/dts/ipq8070-tl-er2260t.dts b/target/linux/qualcommax/dts/ipq8070-tl-er2260t.dts
 new file mode 100644
-index 0000000000..9d52d47a14
+index 00000000..e300f65b
 --- /dev/null
-+++ b/package/patches/qca-ssdk-shell/0007-qca-ssdk-shell-restore-interface-mode-enum.patch
-@@ -0,0 +1,70 @@
-+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-+From: wen <wen@local>
-+Date: Tue, 1 Sep 2026 00:00:00 +0800
-+Subject: [PATCH] qca-ssdk-shell: restore interface mode enum to match kernel qca-ssdk
-+
-+The 0006 patch remapped fal_port_interface_mode_t values to phy_interface_t
-+standard (PORT_SGMII_PLUS=23, PORT_10GBASE_R=27), but qca-ssdk kernel uses
-+legacy 6/8. Restore legacy values so ssdk_sh set/apply works.
-+
-+Signed-off-by: wen <wen@local>
-+---
-+--- a/include/fal/fal_port_ctrl.h
-++++ b/include/fal/fal_port_ctrl.h
-+@@ -257,24 +257,40 @@ typedef enum {
-+ 
-+ /** Phy interface mode */
-+ 	typedef enum {
-+-		PHY_SGMII_BASET = PHY_INTERFACE_MODE_SGMII,
-+-				/**< SGMII mode */
-+-		PORT_RGMII_BASET = PHY_INTERFACE_MODE_RGMII,
-+-				/**< RGMII mode */
-+-		PHY_PSGMII_BASET = PHY_INTERFACE_MODE_PSGMII,
-++		PHY_PSGMII_BASET = 0,
-+ 				/**< PSGMII mode */
-+-		PORT_QSGMII = PHY_INTERFACE_MODE_QSGMII,
-++		PHY_PSGMII_BX1000 = 1,
-++				/**< PSGMII BX1000 mode */
-++		PHY_PSGMII_FX100 = 2,
-++				/**< PSGMII FX100 mode */
-++		PHY_PSGMII_AMDET = 3,
-++				/**< PSGMII Auto mode */
-++		PHY_SGMII_BASET = 4,
-++				/**< SGMII mode */
-++		PORT_QSGMII,
-+ 				/**<QSGMII mode*/
-+-		PORT_SGMII_FIBER = PHY_INTERFACE_MODE_1000BASEX,
-+-				/** <PORT SGMII_FIBER mode*/
-+-		PORT_SGMII_PLUS = PHY_INTERFACE_MODE_2500BASEX,
-++		PORT_SGMII_PLUS,
-+ 				/**<PORT_SGMII_PLUS mode*/
-+-		PORT_10GBASE_R = PHY_INTERFACE_MODE_10GBASER,
-+-				/**<PORT_10GBASE_R mode*/
-+-		PORT_USXGMII = PHY_INTERFACE_MODE_USXGMII,
-++		PORT_USXGMII,
-+ 				/**<PORT_USXGMII mode*/
-+-		PORT_UQXGMII = PHY_INTERFACE_MODE_QUSGMII,
-++		PORT_10GBASE_R,
-++				/**<PORT_10GBASE_R mode*/
-++		PORT_RGMII_BASET,
-++				/**< RGMII mode */
-++		PORT_RGMII_BX1000,
-++				/**< RGMII BX1000 mode */
-++		PORT_RGMII_FX100,
-++				/**< RGMII FX100 mode */
-++		PORT_RGMII_AMDET,
-++				/**< RGMII Auto mode */
-++		PHY_PSGMII_FIBER,
-++				/** <PHY_PSGMII_FIBER mode */
-++		PORT_SGMII_FIBER,
-++				/** <PORT SGMII_FIBER mode*/
-++		PORT_UQXGMII,
-+ 				/**<PORT_UQXGMII mode*/
-++		PORT_UQXGMII_3CHANNELS,
-++				/**<PORT_UQXGMII 3 port mode*/
-+ 		PORT_INTERFACE_MODE_AUTO,
-+ 				/**PORT AUTO INTERFACE MODE*/
-+ 		PORT_INTERFACE_MODE_MAX = 0xFF
-+
-+-- 
-+2.34.1
-diff --git a/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq8070-tl-er2260t.dts b/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq8070-tl-er2260t.dts
-new file mode 100644
-index 0000000000..ea2f71e34f
---- /dev/null
-+++ b/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq8070-tl-er2260t.dts
-@@ -0,0 +1,485 @@
++++ b/target/linux/qualcommax/dts/ipq8070-tl-er2260t.dts
+@@ -0,0 +1,487 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/* Copyright (c) 2020 The Linux Foundation. All rights reserved.
 + */
 +
 +/dts-v1/;
 +
++#include <dt-bindings/net/qcom-ipq-ess.h>
 +#include "ipq8074-512m.dtsi"
 +#include "ipq8074-ess.dtsi"
 +#include "ipq8074-nss.dtsi"
@@ -156,6 +91,7 @@ index 0000000000..ea2f71e34f
 +
 +	aliases {
 +		serial0 = &blsp1_uart5;
++		label-mac-device = &dp1;
 +		/* Alias as required by u-boot to patch MAC addresses */
 +		led-boot = &led_system_green;
 +		led-failsafe = &led_system_green;
@@ -623,13 +559,14 @@ index 0000000000..ea2f71e34f
 +	status = "okay";
 +};
 diff --git a/target/linux/qualcommax/image/ipq807x.mk b/target/linux/qualcommax/image/ipq807x.mk
-index ec9a06a77c..f4b87a8f6f 100644
+index 4cfbcae7..6a062c74 100644
 --- a/target/linux/qualcommax/image/ipq807x.mk
 +++ b/target/linux/qualcommax/image/ipq807x.mk
-@@ -431,6 +431,19 @@ define Device/tplink_deco-x80-5g
+@@ -347,3 +347,18 @@ define Device/zyxel_nbg7815
+ 		kmod-bluetooth kmod-hwmon-tmp103
  endef
- TARGET_DEVICES += tplink_deco-x80-5g
- 
+ TARGET_DEVICES += zyxel_nbg7815
++
 +define Device/tplink_tl-er2260t
 +	$(call Device/FitImage)
 +	$(call Device/UbiFit)
@@ -639,20 +576,18 @@ index ec9a06a77c..f4b87a8f6f 100644
 +	PAGESIZE := 2048
 +	DEVICE_DTS_CONFIG := config@hk07
 +	SOC := ipq8070
-+	DEVICE_PACKAGES := -kmod-ath11k -kmod-ath11k-ahb -ath11k-firmware-ipq8074 -wpad-openssl -hostapd-common -iw -iwinfo kmod-usb-ledtrig-usbport qca-ssdk-shell
++	DEVICE_PACKAGES := -kmod-ath11k -kmod-ath11k-ahb -ath11k-firmware-ipq8074 \
++		-wpad-openssl -hostapd-common -iw -iwinfo \
++		kmod-usb-ledtrig-usbport qca-ssdk-shell
 +endef
 +TARGET_DEVICES += tplink_tl-er2260t
-+
- define Device/tplink_eap620hd-v1
- 	$(call Device/FitImage)
- 	$(call Device/UbiFit)
 diff --git a/target/linux/qualcommax/ipq807x/base-files/etc/board.d/01_leds b/target/linux/qualcommax/ipq807x/base-files/etc/board.d/01_leds
-index 880ee033a9..d802e4f410 100755
+index e3632585..559f7d44 100644
 --- a/target/linux/qualcommax/ipq807x/base-files/etc/board.d/01_leds
 +++ b/target/linux/qualcommax/ipq807x/base-files/etc/board.d/01_leds
-@@ -33,6 +33,13 @@ spectrum,sax1v1k)
- 	ucidef_set_led_netdev "wan-port-link-green" "WAN-PORT-LINK-GREEN" "90000.mdio-1:1c:green:wan" "wan" "link_2500"
- 	ucidef_set_led_netdev "wan-port-link-yellow" "WAN-PORT-LINK-YELLOW" "90000.mdio-1:1c:yellow:wan" "wan" "tx rx link_10 link_100 link_1000"
+@@ -18,6 +18,13 @@ arcadyan,aw1000)
+ edgecore,eap102)
+ 	ucidef_set_led_netdev "wan" "WAN" "green:wanpoe" "wan"
  	;;
 +tplink,tl-er2260t)
 +	ucidef_set_led_usbdev "usb" "USB" "green:usb" "1-1"
@@ -665,22 +600,36 @@ index 880ee033a9..d802e4f410 100755
  	ucidef_set_led_netdev "aqr" "AQR" "white:aqr" "lan5"
  	;;
 diff --git a/target/linux/qualcommax/ipq807x/base-files/etc/board.d/02_network b/target/linux/qualcommax/ipq807x/base-files/etc/board.d/02_network
-index 708bb1510c..0198472b52 100755
+index b3f9741e..9e87e3e5 100644
 --- a/target/linux/qualcommax/ipq807x/base-files/etc/board.d/02_network
 +++ b/target/linux/qualcommax/ipq807x/base-files/etc/board.d/02_network
-@@ -70,6 +70,9 @@ ipq807x_setup_interfaces()
- 	qnap,301w)
- 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4 10g-2" "10g-1"
+@@ -57,6 +57,9 @@ ipq807x_setup_interfaces()
+ 	zyxel,nbg7815)
+ 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4 10g" "wan"
  		;;
 +	tplink,tl-er2260t)
 +		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4 lan5" "lan6"
 +		;;
- 	tplink,eap620hd-v1|\
- 	tplink,eap660hd-v1)
- 		ucidef_set_interface_lan "lan" "dhcp"
+ 	*)
+ 		echo "Unsupported hardware. Network interfaces not initialized"
+ 		;;
+@@ -76,6 +79,13 @@ ipq807x_setup_macs()
+ 		lan_mac=$(macaddr_add "$wan_mac" 1)
+ 		label_mac="$wan_mac"
+ 		;;
++	tplink,tl-er2260t)
++		lan_mac=$(mtd_get_mac_binary "0:ethphyfw" 0x0)
++		wan_mac=$(mtd_get_mac_binary "0:ethphyfw" 0x6)
++		[ -z "$lan_mac" ] && lan_mac=$(mtd_get_mac_binary "0:art" 0x0)
++		[ -z "$wan_mac" ] && wan_mac=$(macaddr_add "$lan_mac" 1)
++		label_mac="$lan_mac"
++		;;
+ 	esac
+ 
+ 	[ -n "$lan_mac" ] && ucidef_set_interface_macaddr "lan" $lan_mac
 diff --git a/target/linux/qualcommax/ipq807x/base-files/etc/init.d/sfp_link_speed b/target/linux/qualcommax/ipq807x/base-files/etc/init.d/sfp_link_speed
 new file mode 100755
-index 0000000000..39d1b129cc
+index 00000000..39d1b129
 --- /dev/null
 +++ b/target/linux/qualcommax/ipq807x/base-files/etc/init.d/sfp_link_speed
 @@ -0,0 +1,91 @@
@@ -776,17 +725,14 @@ index 0000000000..39d1b129cc
 +	procd_add_reload_trigger network
 +}
 diff --git a/target/linux/qualcommax/ipq807x/base-files/lib/upgrade/platform.sh b/target/linux/qualcommax/ipq807x/base-files/lib/upgrade/platform.sh
-index 1ca7b86b72..01ca3e4a7b 100755
+index bd7b609a..c77ed44f 100644
 --- a/target/linux/qualcommax/ipq807x/base-files/lib/upgrade/platform.sh
 +++ b/target/linux/qualcommax/ipq807x/base-files/lib/upgrade/platform.sh
-@@ -62,6 +62,7 @@ platform_do_upgrade() {
- 	netgear,wax218|\
+@@ -43,6 +43,7 @@ platform_do_upgrade() {
  	netgear,wax620|\
  	netgear,wax630|\
+ 	zbtlink,zbt*|\
 +	tplink,tl-er2260t|\
- 	zyxel,nwa210ax)
+ 	zte,mf269)
  		nand_do_upgrade "$1"
  		;;
--- 
-2.34.1
-
