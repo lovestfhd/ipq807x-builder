@@ -1,3 +1,3 @@
-# LibWrt TL-ER2260T-SFP Builder (GitHub Actions)
+# IPQ807x OpenWrt Builder
 
-Auto build LibWrt (Qualcomm IPQ807x) with NSS support for TP-Link TL-ER2260T-SFP.
+Automated builder for Qualcomm IPQ807x boards with NSS support.

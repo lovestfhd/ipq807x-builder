@@ -1,4 +1,4 @@
-name: Build LibWrt TL-ER2260T-SFP
+name: Build IPQ807x Firmware
 
 on:
   workflow_dispatch:
@@ -112,5 +112,5 @@ jobs:
         uses: actions/upload-artifact@v4
         if: steps.organize.outputs.status == 'success' && !cancelled()
         with:
-          name: LibWrt_TL-ER2260T_firmware
+          name: ipq807x_firmware
           path: ${{ env.FIRMWARE }}
